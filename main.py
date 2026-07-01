@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, UploadFile, File
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import tensorflow as tf
@@ -6,10 +6,11 @@ import numpy as np
 import cv2
 import time
 import uvicorn
+import os
 
 app = FastAPI(
     title="TrashGuard AI Server",
-    version="1.0.0"
+    version="1.1.0"
 )
 
 app.add_middleware(
@@ -27,7 +28,6 @@ model = tf.keras.models.load_model(MODEL_PATH)
 
 last_warning_time = 0
 WARNING_COOLDOWN = 20
-
 CONFIDENCE_THRESHOLD = 0.80
 
 
@@ -38,7 +38,7 @@ def predict_trash(image):
     image = np.expand_dims(image, axis=0)
     image = tf.keras.applications.mobilenet_v2.preprocess_input(image)
 
-    prediction = model.predict(image)[0][0]
+    prediction = model.predict(image, verbose=0)[0][0]
 
     if prediction >= 0.5:
         label = "trash"
@@ -59,12 +59,29 @@ def home():
     }
 
 
+@app.get("/health")
+def health():
+    return {
+        "status": "ok",
+        "message": "TrashGuard AI API is healthy"
+    }
+
+
 @app.post("/analyze")
-async def analyze(request: Request):
+async def analyze(
+    request: Request,
+    file: UploadFile = File(None)
+):
     global last_warning_time
 
     try:
-        image_bytes = await request.body()
+        # Cách 1: Nhận ảnh từ Swagger/Postman dạng file upload
+        if file is not None:
+            image_bytes = await file.read()
+
+        # Cách 2: Nhận ảnh raw binary từ ESP32-CAM/Postman binary
+        else:
+            image_bytes = await request.body()
 
         if not image_bytes:
             return JSONResponse(
@@ -94,7 +111,6 @@ async def analyze(request: Request):
             )
 
         label, confidence = predict_trash(image)
-
         current_time = time.time()
 
         if label == "trash" and confidence >= CONFIDENCE_THRESHOLD:
@@ -139,7 +155,6 @@ async def analyze(request: Request):
 
 
 if __name__ == "__main__":
-    import os
     port = int(os.environ.get("PORT", 8000))
 
     uvicorn.run(
